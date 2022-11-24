@@ -1,0 +1,88 @@
+﻿tourney_name: Tournament Name (Australian Open, Roland Garros, Wimbledon, US Open)
+
+
+player_ht: Opponent Height (cm)
+
+
+opp_ht : Player Height (cm)
+
+
+player_ioc: Player’s Three-Character Country Code
+
+
+opp_ioc: Opponent’s Three-Character Country Code
+
+
+player_age: Player’s age, in years, at time of the match
+
+
+opp_age: Opponent’s age, in years, at time of the match
+
+
+player_rank: player's WTA rank, as of the date of the match
+
+
+opp_rank: opponents WTA rank, as of the date of the match
+
+
+p_df: player's number of double faults
+
+
+ o_df: opponent’s number of double faults
+
+
+p_ace: player's number of aces
+
+
+o_ace: opponent’s number of aces
+
+
+p_svpt: player's number of service points
+
+
+o_svpt: opponent’s number of service points
+
+
+p_1stIn: player's number of first serves made
+
+
+o_1stIn: opponent’s number of first serves made
+
+
+p_1stWon: player's number of first serves points won
+
+
+o_1stWon: opponent's number of first serves points won
+
+
+p_2ndWon: player's number of second serves points won
+
+
+o_2ndWon: opponent's number of second serves points won
+
+
+p_SvGms: player's number of serve games
+
+
+o_SvGms: opponent’s number of serve games
+
+
+p_bpSaved: player's number of break points saved
+
+
+p_bpSaved: opponent’s number of break points saved
+
+
+p_bpFaced: player's number of break points faced
+
+
+p_bpFaced: opponent’s number of break points faced
+
+
+p_set1: player's number of games won in set 1
+
+
+o_set1: opponent’s number of games won in set 1
+
+
+win: match outcome from player's perspective
