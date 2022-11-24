@@ -1,0 +1,1247 @@
+---
+title: "Building a WTA Grand Slam Tennis Match Prediction Model"
+author: "Jai Uparkar"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+![](/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/wta_logo.png){width=500px}
+
+# Introduction 
+
+The aim of this project is to build a machine-learning model that can predict the outcome of a WTA match in a Grand Slam tournament. To accomplish this, we are using the [tennis_wta](https://github.com/JeffSackmann/tennis_wta) data set by Jeff Sackmann from GitHub and will be implementing a variety of techniques from the class to develop the most accurate model for this binary classification problem. 
+
+#### Loading Packages and Setting Up Environment
+```{r setup, echo = TRUE, message = FALSE}
+library(corrplot)  # correlation plot
+library(discrim)  # linear discriminant analysis
+library(corrr)   # calculating correlation
+library(knitr)   
+library(MASS)    # assist with the markdown 
+library(tidyverse)   # using tidyverse and tidy models 
+library(tidymodels)
+library(ggplot2)   #visualizations
+library(ggrepel)
+library(ggimage)
+library(rpart.plot)  # visualizing trees
+library(vip)         # variable importance 
+library(vembedr)     # embedding links
+library(janitor)     # cleaning out our data
+library(randomForest)   # building our rand forest
+library(dplyr)     # basic r functions
+library(yardstick) # measuring certain metrics
+library(ISLR)
+library(randomForest)
+library(xgboost)
+library(ggimage)
+library(ggtext)
+setwd("~/Downloads/PSTAT231/Final_Project")
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+## What is the WTA?
+The WTA (Women’s Tennis Association) presides over the WTA Tour, the worldwide professional tennis tour for women, and is the organizing body of women’s professional tennis. The biggest and most important tournaments in tennis exist for both the WTA and the ATP. The most important tournaments in tennis are Grand Slam major tournaments: the Australian Open, Roland Garros, Wimbledon, and the US Open. These tournaments happen every year and winning a Grand Slam would be a crowning achievement in one’s tennis career. These tournaments provide the most prize money, public and media attention, ranking points, and the biggest pool of competitors. 
+
+Grand Slams last for 2 weeks and consist of 7 rounds of single elimination games with a total of 128 players in the first round. The Grand Slam tournaments are played on different surfaces: Australian and US Open are both played on hard courts, Roland Garros on clay courts, and Wimbledon on grass courts. Since Grand Slams are the most high-profile and important tournaments in tennis, the outcomes can be unpredictable to a certain extent and provides exciting opportunities for tennis fans to watch a player make a breakthrough. 
+
+Here is a video of 2021 US Open women’s champion Emma Raducanu. This was the most memorable and unpredictable Grand Slam tournament in recent years because of Raducanu's incredible circumstances. Raducanu entered the main draw as a qualifier which meant that she played three matches in a qualifying tournament in order to get into the main draw of the tournament. She won matches against notable and highly-ranked players without ever dropping a set. She went on to win the entire tournament without dropping a set and was the first woman to do this at the US Open since 2014 (accomplished by Serena Williams). She also is the first qualifier, female or male, to win a Grand Slam in the Open Era. 
+
+```{r 1, echo = FALSE}
+embed_url("https://www.youtube.com/watch?v=hRydTS4kCaE&ab_channel=USOpenTennisChampionships")%>%
+  use_align("center")
+```
+## Why is this model relevant?
+
+Due to the analytic revolution within sports, tennis like many other sports is utilizing data and artificial intelligence to predict the outcomes of tennis matches. Particularly for tennis, IBM Consulting has partnered with Grand Slams to use data to create captivating and interesting match insights for tennis fans. IBM’s analytics and other predictive models can help fans determine if they want to watch a certain tennis match and much more. IBM’s predictive model is incredibly robust and involves millions of data points that come from play-based data points, player information, and sentiment analysis from articles. With models like this, organizations and tournaments can attain more customers and high profits while also engaging fans with interesting statistics. 
+
+## Project Roadmap
+
+Given the project background and importance, I’ll go over the general process of creating a predictive model for tennis match outcomes. We will first perform some data manipulation and cleaning, and then perform some exploratory data analysis to get a better understanding of the data and any trends within it as well. The goal is to determine tennis match outcomes (win or loss) given match predictor variables like player information and match statistics. Next, we will perform a split on our data, develop a recipe, and set folds for cross-validation. We will be implementing a variety of models that we learned from this class: Logistic Regression, Linear Discriminant Analysis, Quadratic Discriminant Analysis, Lasso, Decision Tree, Random Forest, and K-Nearest Neighbor models. We will then pick the best model from these methods and analyze its accuracy and effectiveness. 
+
+# Exploratory Data Analysis 
+
+## Loading Raw data
+
+We obtained our data for this project through Jeff Sackmann’s dataset on GitHub. His open-source datasets contain all the professional tennis match statistics and information from 1968 on the WTA. The data set includes information on the match (1st points won, number of aces, double faults, etc), player information (height, age, ranking, etc), and tournament information. In total there are 48 features from every match observation. There are approximately 3000 records for each year and there are over 52 years of singles professional tour match information in the dataset. Since there is so much data available from the data set, I have decided to limit the scope of my analysis to include data from the years 2019 to 2022 and to only Grand Slam tournaments.
+
+```{r 2, echo = TRUE, message = FALSE, warning = FALSE}
+setwd("~/Downloads/PSTAT231/Final_Project") # setting to final proj directory
+
+wta_2022_df <-read.csv('data/wta_matches_2022.csv') # 2022 data
+wta_2021_df <-read.csv('data/wta_matches_2021.csv') # 2021 data
+wta_2020_df <-read.csv('data/wta_matches_2020.csv') # 2020 data
+wta_2019_df <-read.csv('data/wta_matches_2019.csv') # 2019 data
+
+wta_df<- rbind(wta_2022_df, wta_2021_df, wta_2020_df, wta_2019_df)
+dim(wta_df) # How big is the data set without filtering?
+
+# only interested in predicting Grand Slams
+wta_df <- wta_df %>% filter( tourney_level == 'G')
+dim(wta_df)
+```
+
+There are over 49 variable in this data set and over 1,905 data records. This is quite a lot of information and 
+we need to do some cleaning before we get a data set we are ready to work with. Let's look at some of the missing-ness that exists within this data set to understand which rows and variables we need to drop. 
+```{r 3, echo = TRUE, message = FALSE, warning = FALSE}
+# how many missing values for each column
+table_missing<- wta_df  %>% summarise_all(~sum(is.na(.)))  # doesn't provide accurate information
+
+# missing values for ranking info columns that need to be factors
+x<- sum(is.na(as.numeric(wta_df$winner_seed)))/nrow(wta_df) # about 50 percent is missing
+y<- sum(is.na(as.numeric(wta_df$loser_seed)))/nrow(wta_df) # about 75 percent is missing
+z<- sum(is.na(as.numeric(wta_df$winner_entry)))/nrow(wta_df) # everything is missing
+t <- sum(is.na(as.numeric(wta_df$loser_entry)))/nrow(wta_df) # everything is missing
+missing_ness_num<- list(x, y, z, t)
+names(missing_ness_num)<- c("Winner Seed % Missing", "Loser Seed % Missing", 
+                            "Winner Entry % Missing", "Loser Entry % Missing")
+
+missing_ness_num
+
+# correlation values for these values 
+winner_seedc<- as.numeric(wta_df$winner_seed)
+loser_seedc <- as.numeric(wta_df$loser_seed)
+df_ranking_info<- data.frame(winner_seedc, loser_seedc, wta_df$winner_rank, 
+                             wta_df$loser_rank)
+M<- cor(na.omit(df_ranking_info))
+corrplot(M, type = 'lower')
+```
+
+After inspecting the level of missingness from the data we found that the variables `winner_seed`, `loser_seed`, `winner_entry`, and `loser_entry` had the highest levels of missingness in the data set. In regards to match statistics, there existed missingness for 135 rows which I suspect all come from the same data record and we will be dealing with this later. Since `winner_entry`, and `loser_entry` had a 100 percent of missingness, we will eliminate this variable. Also the seed that a player has in a tournament is reflective of their current ranking so from our correlation plot we found that `winner_seed` and`loser_seed` were highly correlated with ranking so I found no reason to keep this variable in our analysis. From this inspection, I remove the variables `winner_seed`, `loser_seed`, `winner_entry`, and `loser_entry` from our data set. 
+
+```{r 4, echo = TRUE, message = FALSE, warning = FALSE}
+# R redundant information based on Grand Slam data:
+# tourney_id, tourney_date, draw_size, tourney_level, best_of, match_num
+wta_df <- wta_df  %>% dplyr::select(- c(tourney_id, tourney_date, 
+                                        draw_size, tourney_level, 
+                                        best_of, match_num, winner_seed, 
+                                        loser_seed, winner_entry, 
+                                        loser_entry))
+
+#correlation plot to determine extra info
+wta_df_numeric<- wta_df %>% dplyr::select(where(is.numeric))
+M = cor(na.omit(wta_df_numeric))
+corrplot(M, type = 'lower')
+# Observations Significant relationships between: id and age, rank and rank points 
+# player id relflection physical information about them 
+
+wta_df <- wta_df  %>% dplyr::select(- c(winner_rank_points, loser_rank_points))
+```
+
+Next, I filtered out some redundant information from the data set based on intuition and background of playing tennis. Since we are only concerned with Grand Slam matches and have the match and tournament set up, I removed the variables `tourney_id`, `tourney_date`, `draw_size`, `tourney_level`, `best_of`, `match_num` since they provided redundant information. Looking at the correlation plot I identified significant relationships between 
+`id` and `age`, and `rank` and `rank points`. This makes intuitive sense because a player's id is a number associated with a specific player and it reflect personal information about them. Also the number of ranking points you have is what determines your ranking, so again we can filter out this redundant information. We are now left with 37 variables and 212 unique players in our data set. 
+
+```{r 5, echo = TRUE, message = FALSE, warning = FALSE}
+# Missingness for player information + Creating lookup table for height
+total_ht_missing<- subset(wta_df, is.na(winner_ht) | is.na(loser_ht) )
+winnner_ht_missing <-subset(wta_df, is.na(winner_ht))
+loser_ht_missing<-subset(wta_df, is.na(loser_ht))
+wplayer_ht_missing<- winnner_ht_missing$winner_name
+lplayer_ht_missing<- loser_ht_missing$loser_name
+total_height_missing <- unique(c(wplayer_ht_missing, lplayer_ht_missing))
+heights_vect<- c(170, 173, 178, 182, 170, NA, 168, 170, 170, 175, 169, 182, 
+                 165, 175, 164, 164, 164, 166, 178, 172, 175, 173, 170, 180,
+                 170, 164, 180, 170, 174, 180, 160, NA, NA, NA, 183, 170, 
+                 173, NA, 171, NA, 177, 179, 170, NA, 172, NA, NA, NA, 175, 173, 
+                 NA, NA, NA, 157, 172, 173, 157, NA, 170, 165, NA, 183, NA)
+height_lookup<- data.frame(name = total_height_missing, height = heights_vect)
+save(height_lookup, file = "data/lookup_height.RData")
+val<- which( is.na(wta_df$winner_ht) | is.na(wta_df$loser_ht))
+for (i in val){
+  if (is.na(wta_df[i, 'winner_ht'])){
+    winner_name<- wta_df[i, 'winner_name']
+    wta_df[i, 'winner_ht'] = height_lookup[height_lookup$name == winner_name, ]$height
+  }
+  
+  if (is.na(wta_df[i, 'loser_ht'])){
+    winner_name<- wta_df[i, 'loser_name']
+    wta_df[i, 'loser_ht'] = height_lookup[height_lookup$name == winner_name, ]$height
+  }
+}
+
+wta_df$winner_ht[is.na(wta_df$winner_ht)] <- round(mean(wta_df$winner_ht,na.rm = TRUE))
+wta_df$loser_ht[is.na(wta_df$loser_ht)] <- round(mean(wta_df$loser_ht,na.rm = TRUE))
+```
+
+Previously I also discovered missingness in certain player's heights and found there were 63 unique players that had missing information about their height. Since you can easily find this information, I actually created a look-up table that consists of all the missing player's heights from Googling. There were only a handful of player's whose height I was not able to find so imputed those with the average height. 
+
+```{r 6, echo = TRUE, message = FALSE, warning = FALSE}
+# rows with missingness have all the same match stats missing and are all from the same match
+wta_df<- wta_df %>% drop_na(minutes, w_ace, winner_rank, loser_rank)
+
+# dependent on ranking and statistics but independent of player
+wta_df <- wta_df  %>% dplyr::select(- c(winner_id, winner_name, loser_id, loser_name))
+
+# how many NA values are remaining
+num_0<- sum(is.na(wta_df)) #0
+
+#1760 rowa and 33 columns
+dim(wta_df)
+```
+The last bit of cleaning I did was to deal with the match statistics that were missing for 135 rows, so I simply dropped those rows because match statistics are really important to determine whether or not a player wins. I also dropped the variables `winner_id`, `winner_name`, `loser_id`, and `loser_name`because I wanted the model to perform independent of the actual player but dependent on the player's ranking and statistics. 
+
+### Tidying Data 
+```{r 7, echo = TRUE, message = FALSE, warning = FALSE}
+# create 2 versions of dataset, one from the loser view, one from winner view (player vs opponent)
+# by default we have the winner 
+colnames(wta_df)<- str_replace(colnames(wta_df), "winner", "player")
+colnames(wta_df)<- str_replace(colnames(wta_df), "loser", "opp")
+colnames(wta_df)<- str_replace(colnames(wta_df), "w_", "p_")
+colnames(wta_df)<- str_replace(colnames(wta_df), "l_", "o_")
+
+# splitting up the set score
+for (i in 1:nrow(wta_df)){
+  num_sets = str_count(wta_df$score[i], "-")
+  strscore<- unlist(str_split(wta_df$score[i], " "))
+  strscore<- unlist(str_split(strscore, "-"))
+  new_strscore<- substr(strscore,1,1)[0:2]
+  wta_df$p_set1[i]<- new_strscore[1]
+  wta_df$o_set1[i]<- new_strscore[2]
+  wta_df$total_sets[i]<- num_sets
+  wta_df$win[i]<- 1
+}
+
+# remove any match that was not completed
+x<- as.numeric(wta_df$p_set1)
+removeRow_set<- which(is.na(x))
+wta_df<- wta_df[-removeRow_set,]
+
+winner_df<- wta_df # dataframe from the winner POV
+
+loser_df<- wta_df # dataframe from the loser POV 
+# swapp the opponent and the player 
+
+colnames(loser_df)<- c("tourney_name", "surface","opp_hand", "opp_ht","opp_ioc", 
+                       "opp_age", "player_hand" , "player_ht" ,  "player_ioc",  "player_age", "score",  
+                       "round",  "minutes", "o_ace" , "o_df" ,"o_svpt", "o_1stIn" , "o_1stWon", "o_2ndWon",
+                       "o_SvGms" , "o_bpSaved", "o_bpFaced", "p_ace", "p_df", "p_svpt", "p_1stIn", 
+                       "p_1stWon", "p_2ndWon", "p_SvGms" , "p_bpSaved","p_bpFaced","opp_rank", "player_rank", "o_set1","p_set1","total_sets", "win")
+loser_df$win<- 0
+loser_df2 <- loser_df[, match(colnames(loser_df), colnames(winner_df))] # now columns are in same order
+
+total_wta_df<- rbind(winner_df, loser_df2)
+total_wta_df <-total_wta_df  %>% dplyr::select(- c(score))
+total_wta_df <- total_wta_df %>% mutate_at(c('p_set1', 'o_set1'), as.numeric)
+
+```
+
+There are some variable we need to create and rename, and we need to slightly change how the information should be represented in order to actually perform binary classification. In the data set we are using, each row represents a match from the winner's perspective. Thus there is information about a winner and a loser but this set up only has one outcome: winning. So, we need to restructure the data set to be from the player's perspective, not from the winner's perspective. To create this neutrality and binary outcomes we renamed the columns that contained 'winner' or 'w' to be player (p) and columns that contained 'loser' or 'l' to be opponent (opp). Then I created a new variable win and recorded the match outcome from the player's perspective (which is all 1s since the information is presented from the winner's/player's perspective). So to get information on match losses, I simply duplicated the data set and switched the column information so now the data set would be from the loser's perspective. I combined the data set from the winner's and loser's perspective to get a final data set that has an equal distribution of match outcomes and a binary outcome This new structured format of the data has 2 rows for each match: one from the loser's perspective and one from the winner's perspective so that we will be able to predict match outcomes. I also engineered three variables in this data set: the number of games won in the first set by the winner and the loser which was derived from the `score` column that contained the full match score (ex: 6-3, 4-6, 6-2) and total sets played. Since you can't predict the outcome of a player winning a watch with the score, we decided to remove this variable but only keep information from the first set. I decided to keep the first set score because I believed we would be able to build a better predictive model by predicting a player's probability of winning after the first set was played. 
+
+```{r 8, echo = TRUE, message = FALSE, warning = FALSE}
+dummy_2L<- total_wta_df %>% mutate(opp_ioc = factor(opp_ioc), 
+                                   player_ioc = factor(player_ioc), 
+                                   player_age = base::round(player_age),
+                                   opp_age = base::round(opp_age)) %>%
+  mutate(round = recode(round, "R128" = 1, "R64" = 2, "R32" = 3, "R16" = 4, "QF" = 5, "SF" = 6, "F" = 7), 
+         surface = recode(surface, "Hard" = 1, "Clay" = 2, "Grass" = 3 ))
+
+testing_df <- dummy_2L %>% dplyr::select(where(is.numeric))
+M = cor(testing_df)
+corr_with_win<- as.data.frame(sort(M['win',], decreasing = T))
+corrplot(M,type = 'lower')
+# Takeaway: surface, round, minutes, and total sets have 0 correlation with win, so we can remove them 
+
+total_wta_df_clean <- total_wta_df %>% dplyr::select(- c(surface, round, minutes, total_sets, player_hand, opp_hand)) %>% 
+  mutate(opp_ioc = factor(opp_ioc), player_ioc = factor(player_ioc), win = factor(win),
+         player_age = base::round(player_age), opp_age = base::round(opp_age), tourney_name = factor(tourney_name)) 
+
+total_wta_df_eda <- total_wta_df %>% 
+  mutate(opp_ioc = factor(opp_ioc), player_ioc = factor(player_ioc), win = factor(win),
+         player_age = base::round(player_age), opp_age = base::round(opp_age), tourney_name = factor(tourney_name),
+         player_hand = factor(player_hand), opp_hand = factor(opp_hand))
+
+save(total_wta_df_eda, file = 'data/eda_wta_df.RData')
+save(total_wta_df_clean, file = 'data/clean_wta_df.RData')
+
+```
+
+Before finalizing my data set, I performed one more correlation plot to determine insignificant features and converted some categorical variables (surface and round) to numeric. I found that surface, round, minutes, and total sets played have 0 correlation with win, so I decided to remove those variables. The last thing I did was make the player country, match outcome, tournament name, player's hand, a factor and rounded age to a whole number. 
+
+## Final Variables
+As demonstrated in our work above, we eliminated observations that were missing key statistics and variables based on my familiarity with tennis and knowing what variables are important. I trimmed the data down to 32 key variables, with 31 of them being predictors and 1 `win`, our response variables. The variables that I selected for the clean data set are as following. After running models with all these variables, I ultimately removed four of these variables in order to prevent rank deficiency and increase the rigor of prediction which I will explain later on.
+
+`tourney_name`: Tournament Name (Australian Open, Roland Garros, Wimbledon, US Open)
+
+`player_ht`, `opp_ht` : Player Height (cm)
+
+`player_ioc`, `opp_ioc`: Three-Character Country Code
+
+`player_age`, `opp_age`: Age, in years, at time of the match
+
+`player_rank`, `opp_rank`: player's/opponents WTA rank, as of the date of the match
+
+`p_df`, `o_df`: player's/opponents number of double faults
+
+`p_ace`, `o_ace`: player's/opponents number of aces
+
+`p_svpt`, `o_svpt`: player's/opponents number of service points
+
+`p_1stIn`, `o_1stIn`: player's/opponents number of first serves made
+
+`p_1stWon`, `o_1stWon`: player's/opponents number of first serves points won
+
+`p_2ndWon`, `o_2ndWon`: player's/opponents number of second serves points won
+
+`p_SvGms`, `o_SvGms`: player's/opponents number of serve games
+
+`p_bpSaved`, `p_bpSaved`: player's/opponents number of break points saved
+
+`p_bpFaced`, `p_bpFaced`: player's/opponents number of break points faced
+
+`p_set1`, `o_set1`: player's/opponents number of games won in set1
+
+`win`: match outcome from player's perspective
+
+## Visual EDA
+
+With our data now clean and ready to use, I wanted to take a look at the effect some of our variables have match using ggplot visualizations. Before getting started though, I performed some basic visualizations to understand the distributions of the variables we are going to be working with.
+
+### Player's Physical Information
+```{r 9, echo = TRUE, message = FALSE, warning = FALSE}
+load('data/eda_wta_df.RData')
+load('data/clean_wta_df.RData')
+
+# Basic Distribution 
+ggplot(total_wta_df_eda, aes(x=player_age)) + 
+  geom_histogram(bins = 20, fill = "darkolivegreen2") + xlab("Player Age")+
+  ggtitle("Histogram of Player Age (years)") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(total_wta_df_eda, aes(x=player_ht))  + 
+  geom_histogram(bins = 20, fill = "darkolivegreen2") + xlab("Player Height")+
+  ggtitle("Histogram of Player Heights (cm)") +  
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+In the histogram of player age, we see that most tennis players who compete at Grand Slams are between 20 and 30 years old. This makes sense because tennis is a highly physical sport and many of the players are at the peak of their physical prowess that this age. The distribution is normal is and unimodal with the data centered around 25 years of age. 
+
+In the histogram of player height, we see that most tennis players who compete at Grand Slams are between 169 and 181 centimeters. The plot is relatively normal but is slightly skewed to the right. This is logical because tennis players who are taller have higher body mass and can hit the ball harder so many people who choose to be professional tennis players already have these desired qualities.
+
+### Match Duration 
+```{r 10, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(total_wta_df_eda, aes(x=minutes))  + 
+  geom_histogram(bins = 25,alpha = 0.5, fill = "darkolivegreen2") +
+  xlab("Match Length (minutes)")+
+  ggtitle("Histogram of Match Lengths") +  
+  theme(plot.title = element_text(hjust = 0.5))  +
+  geom_vline(aes(xintercept = mean(minutes)),col='red',size=1)
+
+ggplot(total_wta_df_eda, aes(x = tourney_name, y = minutes, color = tourney_name)) +
+  geom_violin(trim = FALSE) + xlab("Match Length (minutes)")+
+  ggtitle("Histogram of Match Length by Grand Slam") +  
+  theme(plot.title = element_text(hjust = 0.5))  +
+  stat_summary(fun.data=mean_sdl, mult=1, 
+               geom="pointrange", color="black")
+
+ggplot(data=total_wta_df_eda, mapping = aes(x = win, y = minutes)) + 
+  geom_boxplot(fill = "darkolivegreen2") +
+  ylab("Match Length (minutes)")+ xlab("Match Outcome") +
+  ggtitle("Boxplot of Match Duration by Outcome ") 
+```
+
+Next, I wanted to analyze any trends in the match duration and see how it would differ by Grand Slam because of the different surfaces. Looking at the histogram, the distribution of match duration, I see that most Grand Slam matches typically range from 50 to 200 minutes. The distribution is normal and skewed to the right with the graph centered around 95 minutes which makes sense because the average WTA match is around 90 minutes. 
+
+Because the surface of the tennis court effects the way the ball is played (certain surfaces make the ball faster while others slower) and each location comes with its own conditions, I wanted to inspect the match duration by Grand Slam. Looking at each distribution, I found that all Grand Slams relatively follow the same distributions with some interesting differences. The US Open had the longest match duration out of all the tournaments. All the Grand Slams all approximately have the same mean match length but Wimbledon has a slightly lower average. This makes sense because grass courts are the fastest out of all the surfaces and thus points tend to be shorter in length. 
+
+Lastly, I observed no significant different in match duration by outcome.
+
+### Country Affinities
+```{r 11, echo = TRUE, message = FALSE, warning = FALSE}
+# Which countries have a certain affinity for sufaces?
+country_count<- as.data.frame(table(total_wta_df_eda$player_ioc))
+newdata <- country_count[order(-country_count$Freq),]
+
+mydat1 <- total_wta_df_eda %>% dplyr::select(player_ioc,win,surface)
+mydat1_val <- as.data.frame(mydat1 %>% group_by(player_ioc, surface) %>% count(win)) %>% 
+  dplyr::filter(win == 1)
+
+country_win_clay<- mydat1_val  %>%dplyr::filter(surface == 'Clay')  %>% 
+  dplyr::select(-c(surface,win)) 
+
+country_win_grass<- mydat1_val  %>%dplyr::filter(surface == 'Grass')  %>% 
+  dplyr::select(-c(surface,win)) 
+
+country_win_hard <- mydat1_val  %>%dplyr::filter(surface == 'Hard')  %>% 
+  dplyr::select(-c(surface,win)) 
+
+clay_win_graph <- ggplot(data=country_win_clay, aes(x=player_ioc, y=n)) +
+  geom_bar(stat="identity", fill = "coral2") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  xlab("Country") + ylab("Number of Wins") + ggtitle("Number of Wins on Clay by Country")
+
+grass_win_graph <- ggplot(data=country_win_grass, aes(x=player_ioc, y=n)) +
+  geom_bar(stat="identity", fill = "darkolivegreen3") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  xlab("Country") + ylab("Number of Wins") + ggtitle("Number of Wins on Grass by Country")
+
+hard_win_graph <- ggplot(data=country_win_hard, aes(x=player_ioc, y=n)) +
+  geom_bar(stat="identity", fill = "deepskyblue3") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  xlab("Country") + ylab("Number of Wins") + ggtitle("Number of Wins on Hard by Country")
+
+clay_win_graph
+grass_win_graph
+hard_win_graph
+```
+
+Looking at these plots, we see that the country with the most amount of wins on any surface is the US followed by the Czech Republic. This is because there are 594 US  and 253 Romanian players in the data set and comprises a significant amount of the data set. Using these graphs I determined the top 10 performing country for each surface. 
+
+Clay: USA CZE RUS ROU FRA POL ESP AUS UKR BLR
+
+Grass: USA CZE ROU GER AUS GBR FRA BEL POL RUS 
+
+Hard: USA CZE RUS AUS  BLR ROU CHN FRA UKR ESP 
+
+This information reflects the most frequent types of courts for each country and also the popularity of each Grand Slam in a country. For example Great Britain is in the top 10 best performing countries for grass court tournaments. This makes sense because grass courts are most common in the UK and is home to Wimbledon as well which always brings out more home favorites. The most common surfaces in Russia and Spain are clay and this also is reflected in the bar plot. 
+
+### Height
+```{r 12, echo = TRUE, message = FALSE, warning = FALSE}
+height_data <-  as.data.frame(total_wta_df_eda %>% dplyr::select(player_ht, win) %>% 
+  group_by(player_ht) %>% count(win)) %>% mutate(win = factor(win))
+
+ggplot(height_data, aes(fill=win, y=n, x=player_ht)) + 
+  geom_bar(position="stack", stat="identity") + xlab("Player Height") + 
+  ylab("Frequency") + 
+  ggtitle("Number of Match Outcomes by Player Height") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Because we know that height is an important attribute to a tennis player's performance, I wanted to understand the distribution of match outcomes by height. Being taller allows you to hit faster ground strokes and more powerful serves physiologically. Looking at this plot, there didn't seem to be too much of a difference in wins and losses. However, we can see that players who are 170 cm tall (5' 5'') are more likely to lose than win and players who are 180 cm tall (5' 9'') are more likely to win than lose. 
+
+```{r 13, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(data=total_wta_df_eda[1:1759,], aes(x=player_ht, y=p_ace)) +
+  geom_bar(stat="identity", fill = "darkolivegreen2") + xlab("Player Height") + 
+  ylab("Number of Aces") + 
+  ggtitle("Number of Aces by Player Height") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Since being taller allows players to generate more power on serves, I looked at the relationship between the number of aces made by player height. While there isn't a very obvious trend that shows a taller player makes more aces, we do find a high number of aces made by taller players. This is an interesting insight because having a good serve is the best way to maintain competitiveness in a match since it's expected that a player holds their own serve.
+
+### Serving 
+```{r 14, echo = TRUE, message = FALSE, warning = FALSE}
+first_serve_plot<- ggplot(total_wta_df_eda, aes(x=win, y=p_1stWon)) + 
+  geom_boxplot(fill = "darkolivegreen2") + xlab("Match Outcome") + 
+  ylab("Number of First Serve Points Won") + 
+  ggtitle("Distribution of First Serve Points Won by Match Outcome") + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+second_serve_plot<- ggplot(total_wta_df_eda, aes(x=win, y=p_2ndWon)) + 
+  geom_boxplot(fill = "darkolivegreen2") + xlab("Match Outcome") + 
+  ylab("Number of Second Serve Points Won") + 
+  ggtitle("Distribution of Second Serve Points Won by Match Outcome") + 
+  theme(plot.title = element_text(hjust = 0.5))
+ 
+first_serve_plot
+second_serve_plot
+
+ggplot(total_wta_df_eda, aes(x=p_1stWon, y=p_2ndWon, color = win)) +
+  geom_point(alpha = 0.3) + geom_smooth()
+```
+
+Because serves are such an important facet of a tennis match, I wanted to see if there was any relationship. If you have a good serve, all you need to do is focus on breaking your opponent's serve. Serving allows a player to have complete control from the start of a point, I wanted to examine serving performance by match outcome. Looking at the first boxplot, we can see that player who win a higher number of their first serve points are more likely to win. The same can be said about second serves made. Lastly, I plotted the number of first serve and second serve points won to determine any relationship in regards to match outcome. We can see a high cluster of red points in the lower left corner which shows that the importance of holding your serve in tennis matches. They both follow somewhat of a positive trend line but after a certain point, the losing match curve starts to dip while the winning curve increases. 
+
+```{r 17, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(total_wta_df_eda, aes(x=p_1stIn, y=p_1stWon, color = win)) +
+  geom_jitter(alpha = 0.3) + xlab("Number of First Serves Made") + 
+  ylab("Number of First Serves Points Won") + 
+  ggtitle("Relationship Between First Serves Made and Won by Match Outcome")+
+  geom_smooth(method=lm, se=TRUE, aes(group=win)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Next, I examined the relationship between the number of first serves made and first serve points won. Because of the complete control that a player has with their serve and the raw power of the shot, I'm not surprised to see a positive relationship between these two variables. From the plot, you can notice a discernible difference by match outcomes as players who win their matches have a higher number of first serve points won. 
+
+### Player Ranking
+
+```{r 15, echo = TRUE, message = FALSE, warning = FALSE}
+ranking_df<- (as.data.frame(total_wta_df_eda %>% dplyr::select(player_rank, opp_rank, win)) %>% 
+                             mutate(win = factor(win)))[1:1759,]
+                           
+for (i in 1:(nrow(ranking_df))){
+  if(ranking_df$player_rank[i] < ranking_df$opp_rank[i]){
+    ranking_df$player_rank_better[i] = 1
+  }
+  else{
+    ranking_df$player_rank_better[i] = 0
+  }
+  if(ranking_df$player_rank_better[i] == 1 & ranking_df$win[i] == 1){
+    ranking_df$did_better_player_win[i] = 1
+  }
+  else{
+    ranking_df$did_better_player_win[i] = 0
+  }
+}
+  
+ggplot(ranking_df, aes(factor(did_better_player_win))) +
+  geom_bar(fill = "darkolivegreen2") + 
+  scale_x_discrete(labels=c("Lesser Ranked Player Won", "Better Ranked Player Won")) +
+  xlab("") +
+  ggtitle("Did the better ranked player win?") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+A tennis player's ranking reflects a lot of information about their current form and performance. A player's ranking is determined by how many matches, and tournaments they have one. Like any other sport, a higher ranked tennis player is also the better player. I wanted to look at how ranking plays a role in match outcomes. Here, I created a new column to determine whether or not the better ranked player won. I found that higher ranked players are more likely to win a match against a counter part with a lower ranking. This makes sense because a high ranked player is probably in better form, shape, and has more momentum than a lesser ranked player. 
+
+### First Set Outcome
+
+```{r 16, echo = TRUE, message = FALSE, warning = FALSE}
+first_set_df<- (as.data.frame(total_wta_df_eda %>% dplyr::select(p_set1, o_set1, win)) %>% 
+  mutate(win = factor(win)))[1:1759,]
+
+for (i in 1:(nrow(first_set_df))){
+  if(first_set_df$p_set1[i] > first_set_df$o_set1[i]){
+    first_set_df$wonset1[i] = 1
+  }
+  else if (first_set_df$p_set1[i] < first_set_df$o_set1[i]){
+    first_set_df$wonset1[i] = 0
+  }
+  
+  if(first_set_df$wonset1[i] == 1 & first_set_df$win[i] == 1){
+    first_set_df$win_overall_given_firstset[i] = 1
+  }
+  else{
+    first_set_df$win_overall_given_firstset[i] = 0
+  }
+}
+
+ggplot(first_set_df, aes(factor(win_overall_given_firstset))) +
+  geom_bar(fill = "darkolivegreen2")  +
+  scale_x_discrete(labels=c("Lost First Set and Won Match", "Won First Set and  Won Match")) +
+  xlab("") +
+  ggtitle("Frequency of First Set Outcomes and Winning a Match") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Grand Slam tennis matches are played best out of 3 sets, like all professional womens tennis matches. Here, I wanted to examine how the first set outcome influences the over all match outcome. In these matches, a player needs to win 2 sets in order to win. The outcome of the first set greatly effects a player's mindset and psyche going into the second set. It is not surprising to find that players are more likely to win the overall match if they win the first set. 
+
+### Breakpoints
+```{r 18, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(total_wta_df_eda, aes(x=p_1stIn, y=p_bpFaced, color = win)) +
+  geom_point(alpha = 0.2) + xlab("Number of First Serves Made Per Match") + 
+  ylab("Number of Breakpoints Faced Per Match") + 
+  ggtitle("First Serves Made and Breakpoints Faced by Match Outcome")+
+  geom_smooth(method=lm, se=TRUE, aes(group=win)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Because serving gives tennis player's a bigger advantage when playing a point, it is expected that when a player is serving they win that game. A break point is a point where the opponent has a chance to win a game when their opponent in serving. The higher the number of breakpoints faced by a player, the more vulnerable they are to losing their serving which sets them back in a match. So, I plotted the number of first serves made in a match against the number of breakpoints faced. Here, we can see a cluter of blue points in the bottom half of the plot which means that player who win their matches face a smaller number of breakpoints because of a more reliable and powerful first serve. Here we can see the benefits of having a good serve is necessary to win a match and  will make you less vulnerable to breakpoints. 
+
+```{r 19, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(total_wta_df_eda, aes(p_bpFaced)) +
+  geom_bar(aes(fill = win)) + xlab("Number of Break Points Faced Per Match") + 
+  ylab("Count") + 
+  ggtitle(" Number of Breakpoints Saved Per Match by Outcome") 
+
+ggplot(data=total_wta_df_eda, mapping = aes(x = win, y = p_bpFaced)) + 
+  geom_boxplot(fill = "darkolivegreen2") +
+   ylab("Number of Breakpoints Faced Per Match")+ xlab("Match Outcome") +
+  ggtitle("Boxplot of Number of Breakpoints Faced Per Match by Outcome ") 
+```
+
+If a player faces a high number of breakpoints, that means they are not able to hold their serve very well and are vulnerable to losing the set. There's more pressure to win break points in order for a player to hold their service game. Here we can see that a player who faced less breakpoints are more likely to win because they are not risk of losing their service game. 
+
+From the histogram we found that as the number of breakpoints faced increased during a match, it was more likely that the player would lose the match. This was reflected in the boxplot as well. 
+
+```{r 20, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(total_wta_df_eda, aes(p_bpSaved)) +
+  geom_bar(aes(fill = win)) + xlab("Number of Break Points Saved") + 
+  ylab("Count") + 
+  ggtitle(" Number of Breakpoints Saved Per Match by Outcome") 
+```
+
+The number of break points saved refers to the number of times in the match the player serving was facing a break point but they won that point, thus "saving it." Like in the trend spotted for the number of breakpoints faced, it fewer number of breakpoints faced means a higher liklihood of winning the match. So, it's unsurprising to see that when a player saves a smaller number of breakpoints they are more likely to win. 
+
+# Setting Up Models 
+
+### Recipe, Splitting, and Cross Validation
+After performing the EDA, we have a good idea how the variables in our dataset impact the match outcome so now we can perform our training/testing split, create recipes cross validation for our prediction model. 
+
+To perform a testing/training split on the data, I decided to go with the standard 70/30 because we don't have too many data points to work with so I wanted there to be a substantial amount of observations to test and train our model. We create a split on the model to prevent over fitting and so that we can actually determine how our model works on unknown data. To maintain reproducibility, we set a random seed and since we are classifying the match outcome, we stratified on the response variable `win`. After splitting our data set, we ended up with 1056 observations for the testing data set and 2462 observations for the training data set. We then performed a cross validation fold on the training set with 10 folds and stratified on the response variable. I performed this in a separate script and loaded it here.
+
+Through the data cleaning process and the EDA process, we know that all the variables except for player and opponent player hand in our cleaned data set is relevant to our model. As such we will be using the same model conditions, response variables, and predictors so we are only creating one main recipe for all our models. When making our recipe we will dummy encode all our categorical variables and center and scale any numerical variables. However, we decide to drop the player/opponent's country as a variable in the model because there are 46 countries which means that 46 extra parameters would be encoded in the model once they dummy encoded. I originally kept country get then I was getting a rank deficient model so I removed them. I also removed the number of games won by the player and the opponent in the first set because I decided I wanted to predict the outcome of the match not the outcome of the match given the first set. I know eliminating these variables will the prediction more challenging. Too see the script for the recipe, cross validation, and splitting refer to the script `Models.R`.
+
+```{r 21, echo = TRUE, message = FALSE, warning = FALSE}
+load('data/model_setup.RData')
+```
+
+### Building Models
+
+We will be trying different machine learning techniques we learned in the class and will be using the same recipe for all models. Since the binary classification outcomes are balanced, we used the roc_auc and accuracy as a metric of performance accuracy. ROC_AUC metric is shows the trade off of sensitivity and sensibility of a model is a good metric when the outcomes are balanced or unbalanced (in this case we have balanced outcomes). For every model, we followed the same general steps: set up the workflow, add the new model, and add the recipe. Then, depending one the model we are working with we will: set up the tuning grid with desired parameters and level of tuning, select the most accurate model from the tuning, fit the model to the workflow, and save results.The recipe below is what I use for all of my models and I saved my recipe, folds, and training/testing data in a RDA file for ease which I will be loading below too. I'll now load the RDA files that contain the tuning information and workflow for each model. You can see the exact code for the models in the script called `Models.R`.
+
+```{r 22, echo = TRUE, message = FALSE, warning = FALSE}
+load('data/bt_tune.rda') # Boosted Tree
+load('data/knn_tune.rda') # K- Nearest Neighbors
+load('data/dec_tree_tune.rda') # decision tree
+load('data/log_tune.rda') # Log 
+load('data/lasso_tune.rda') # lasso
+load('data/DL_tune.rda') # discriminant linear 
+load('data/DQ_tune.rda')  # discriminant quad
+```
+
+### Decision Tree Model
+
+In our decision tree model, I tuned three different parameters:
+
+1. cost_complexity: positive number for the the cost/complexity parameter used by CART 
+models
+
+2. trees:  # of trees to grow in the forest
+
+3. min_n - minimum number of data values needed to create another split. 
+
+To visualize the effects of the changes in certain parameters has on ROC_AUC and accuracy I used the autoplot() function. I also extracted the best-performing model according to roc_auc and fit the final model on the whole training data set.
+
+```{r 23, echo = TRUE, message = FALSE, warning = FALSE}
+best_tree_roc <- select_best(tune_tree, metric = "roc_auc")
+dec_tree_final <- finalize_workflow(wta_workflow_tree, best_tree_roc)
+dec_tree_final_fit <- fit(dec_tree_final, data = wta_train)
+
+autoplot(tune_tree, metric = 'roc_auc')
+
+```
+
+For the roc_auc metric, we can see that a tree depth of 8 and a higher minimal node size resulted in slightly better performing models. Additionally, larger penalties decreased the accuracy of the decision tree. Using this selected model, I combined it with my decision tree workflow on the training data set to get the best fit a decision tree model I also used rplot's function to develop a diagram of my tree model. Looking at the plot we can see that the variable that matters the most for the outcome is number of break points faced.
+
+```{r 24, echo = TRUE, message = FALSE, warning = FALSE}
+dec_tree_final_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint=FALSE)
+```
+
+Like mentioned in the EDA, a breakpoint is a very significant moment in tennis match in order for the player returning to gain an advantage or come back if they are down. The number of breakpoints faced represents the strength of one player's returns and the weakness of the other player's serves. 
+
+### K Nearest Neighbors 
+From the plot below, we observe that as the number of nearest neighbor increases, the more accurate our model was when it came to K-Nearest Neighbors. The highest roc_auc was a little over 0.90.  This model is already worse than our decision tree model.  
+
+```{r 25, echo = TRUE, message = FALSE, warning = FALSE}
+best_knn_roc <- select_best(knn_tune, metric = "roc_auc")
+knn_final <- finalize_workflow(knn_workflow, best_knn_roc)
+knn_final_fit <- fit(knn_final, data = wta_train)
+
+autoplot(knn_tune, metric = 'roc_auc')
+```
+
+### Boosted Tree Model
+
+In our boosted random forest, I tuned three different parameters:
+
+1. learn_rate: number for the rate at which the boosting algorithm adapts from iteration-to-iteration
+
+2. mtry:  proportion of predictors that will be randomly sampled at each split when creating the tree models
+
+3. min_n: minimum number of data values needed to create another split. 
+
+```{r 26, echo = TRUE, message = FALSE, warning = FALSE}
+best_bt_roc <- select_best(bt_tune, metric = "roc_auc")
+bt_final <- finalize_workflow(bt_workflow, best_bt_roc)
+bt_final_fit <- fit(bt_final, data = wta_train)
+
+autoplot(bt_tune, metric = 'roc_auc')
+```
+
+In the plot, we can see that a higher learning rates with medium to small minimal node size and a higher number of predictors results in the highest roc_auc value. From the plot above, we can see that the smallest learning rate, the smallest node size and a medium level of predictors yielded the highest roc_auc value. The ultimate optimal mode had 13 randomly select predictors, 2 nodes, and a learning rate of approximately 1.6.  
+
+### Lasso
+
+In the plot for lasso regression, we can see a small amount of regularization and a high proportion of 
+lasso penalty results in the highest roc_auc value. Even though there are 5 lines plottes we can only see a lasso penalty of 0 and 1 which makes me think that the penalties in between perform almost exactly the same compared to the two lines present. The lasso penalty of 0 and 1 differ very slightly in roc_auc as the amount of regularization increases but a penalty of 1 makes the roc_auc drop off significantly stepper around .001.  
+
+```{r 27, echo = TRUE, message = FALSE, warning = FALSE}
+# LASSO
+best_lasso_roc <- select_best(tune_lasso, metric = "roc_auc")
+lasso_final <- finalize_workflow( wta_workflow_lasso, best_lasso_roc)
+lasso_final_fit <- fit(lasso_final, data = wta_train)
+autoplot(tune_lasso, metric = 'roc_auc')
+```
+
+Lasso regression is a method that performs variable selection and regularization to improve accuracy and interpretability and can thus prevent a model from over fitting. If the penalty is small that means it choses all of the variables and there is no regularization. If the penalty is too large, then LASSO choses none of the variables and hence is too extreme. We can see that a lasso penalty between 1 and 0.25 yield the highest roc_auc value with a small to medium level of regularization. This means that there extra paramters in the model that can be set to zero. 
+
+
+# Accuracy of Models
+In order to determine the best ROC AUC scores for each model, I extracted the roc_auc values from each of the models and the best models from the techniques where I was tuning, and created a dataframe in order to represent all the information at once. 
+
+```{r 28, echo = TRUE, message = FALSE, warning = FALSE}
+
+# LOG 
+log_final_fit <- fit(wta_workflow_log, data = wta_train)
+wta_log_reg_auc <- augment(log_final_fit, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0) %>%
+  dplyr::select(.estimate)
+
+#DL 
+DL_train_fit_results <- fit(wta_workflow_DL, wta_train)
+wta_DL_auc <- augment(DL_train_fit_results, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+
+# DQ
+DQ_train_fit_results <- fit(wta_workflow_DQ, wta_train)
+wta_DQ_auc <- augment(DQ_train_fit_results, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+
+#Decision Tree
+wta_DT_auc <- augment(dec_tree_final_fit, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+
+# KNN
+wta_knn_auc <- augment(knn_final_fit, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+
+# Boosted Tree
+wta_bt_auc <- augment(bt_final_fit, new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+
+# Lasso Tree
+wta_lasso_auc <- augment(lasso_final_fit , new_data = wta_train) %>%
+  roc_auc(win, estimate = .pred_0)  %>%
+  dplyr::select(.estimate)
+```
+
+```{r 29, echo = TRUE, message = FALSE, warning = FALSE}
+roc_auc_estimate<- c(wta_log_reg_auc$.estimate,
+                           wta_DL_auc$.estimate,
+                           wta_DQ_auc$.estimate,
+                           wta_DT_auc$.estimate,
+                           wta_knn_auc$.estimate,
+                           wta_bt_auc$.estimate,
+                           wta_lasso_auc$.estimate)
+
+model_names<- c("Logistic Regression", "LDA","QDA","Decision Tree", "K-Nearest Neighbor", "Boosted Tree", "Lasso")
+
+wta_model_results <- data.frame(Model = model_names,
+                             ROC_AUC = roc_auc_estimate)
+
+wta_model_results <- wta_model_results  %>% 
+  arrange(desc(ROC_AUC))
+wta_model_results
+```
+
+Looking at the table above, we can see that all the models performed extremely well, with a roc_auc value above 95. Because the accuracy is so high for all the models, I'm actually very curious to see how they perform on the test set. The boosted tree model obtained an accuracy metric is 1, which is the best a model can get. But I have a feeling that could be due to over fitting. I also produced a dot and lollipop plot to demonstrate the accuracy of each method. From both graphs we can see that the boosted tree model and the logistic regression performed the best. 
+
+```{r 30, echo = TRUE, message = FALSE, warning = FALSE}
+wta_results_dot_plot <- ggplot(wta_model_results, aes(x = Model, y = ROC_AUC)) +
+  geom_point(fill = "darkolivegreen2", color = "darkolivegreen2", size=7) + 
+  geom_segment(aes(x = Model, 
+                   xend = Model, 
+                   y=min(ROC_AUC), 
+                   yend = max(ROC_AUC)), 
+               linetype = "longdash", 
+               size=0.5) + 
+  labs(title = "Performance of Tennis Match Predicting Models") + 
+  coord_flip() + theme(plot.title = element_text(hjust = 0.5))
+wta_results_dot_plot
+```
+```{r 31, echo = TRUE, message = FALSE, warning = FALSE}
+fourthdown_lollipop_plot <- ggplot(wta_model_results, aes(x = Model, y = ROC_AUC)) + 
+    geom_segment( aes(x = Model, xend = Model, y = ROC_AUC, yend = 0)) +
+  geom_point(size=6, color= "black", fill=alpha("darkolivegreen2", 0.4), alpha=0.7, shape=21, stroke=3)+
+  labs(title = "Performance of Tennis Match Predicting Models") + 
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5))
+fourthdown_lollipop_plot
+```
+
+# Results From Best Model
+
+From the graphs and table of the roc_auc metric for each model that we generated we saw that all the models performed extremely well. However, the model that performed the best was the boosted tree. Since we tuned this model let us look at the exact parameters of this models and see which tree is the best. Using the show_best function, we can determine what exact parameters of mtry, min_n, and learn_rate yielded the best accurate model. We found out that model 20 out of 100s performed the best for the boosted tree model. The minimum number of data points in a node that is required for the node to be split further was 2 (`min_n`), 13 were predictors randomly sampled at each split when creating the tree models, and the learn rate was 1.58. 
+
+```{r 32, echo = TRUE, message = FALSE, warning = FALSE}
+show_best(bt_tune, metric = "roc_auc") %>% #showing the best rf model
+  dplyr::select(-.estimator, .config) %>%
+  dplyr::slice(1)
+```
+
+```{r 33, echo = TRUE, message = FALSE, warning = FALSE}
+wta_predict <- predict(bt_final_fit,  new_data = wta_test, type = "class")
+
+wta_predict_with_actual_datal <- wta_predict %>%
+  bind_cols(wta_test)  # adding the actual values side by side to our predicted values
+
+head(wta_predict_with_actual_datal,10)
+```
+
+After using the best booted tree model on our testing set, let us plot the roc_auc curve and obtain the final roc_auc curve to see how our model actually performed. 
+
+```{r 34, echo = TRUE, message = FALSE, warning = FALSE}
+fourthdown_roc_curve <- augment(bt_final_fit, new_data = wta_test) %>%
+  roc_curve(win, estimate = .pred_0)  # computing the ROC curve for this model
+
+autoplot(fourthdown_roc_curve)
+```
+
+As mentioned earlier, the more the roc_auc curve resembles an upside down L, the better it performs. Our roc_auc plot looks very close to what an optimal curve looks like, so this is promising. Now, let's take a look at the actual roc_auc metric of boosted tree model 20. The top right of the curve appears to be at one which is ideal too. 
+
+```{r 35, echo = TRUE, message = FALSE, warning = FALSE}
+wta_best_test_roc_auc <- augment(bt_final_fit, new_data = wta_test) %>%
+  roc_auc(win, estimate = .pred_0) %>%
+  dplyr::select(.estimate)  
+
+wta_best_test_roc_auc
+```
+
+We obtained an roc_auc value of .96. Typically, any value above 0.9 for the roc_auc is considered great for quantifying a model's performance. This is amazing!
+
+<center>
+![](/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/serena_celebration.gif){width=450px}
+<center>
+
+# Visualizing Performance
+Since our model performed extremely well in regards to it's roc_auc metric, I wanted to see how the model performed for specific Grand Slams. 
+
+```{r 36, echo = TRUE, message = FALSE, warning = FALSE}
+grand_slam_names <- unlist(levels(wta_test$tourney_name))
+
+wta_best_augmented <- augment(bt_final_fit, new_data = wta_test)
+
+grand_slam_roc_auc <- function(gs){
+  estimate_column <- (wta_best_augmented %>%
+                        dplyr::filter(str_detect(tourney_name, gs)) %>%
+                        roc_auc(win, estimate = .pred_0) %>%
+                        dplyr::select(.estimate))
+  estimate <- estimate_column$.estimate
+  (estimate)
+  }
+
+grand_slam_roc_auc_scores <- vector("integer", 0)
+
+for(i in grand_slam_names ){
+  grand_slam_roc_auc_scores <- c(grand_slam_roc_auc_scores, grand_slam_roc_auc(i))
+  }
+
+logos= c("<img src='/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/Australian_Open_logo.png' width='50' /><br>*Australian Open*", 
+         "<img src='/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/French_Open_Logo.png' width='50' /><br>*Roland Garros*",
+         "<img src='/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/US_Open_logo.png' width='50' /><br>*US Open*",
+         "<img src='/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/Wimbledon_logo.png' width='50' /><br>*Wimbledon*")
+roc_auc_scores_by_grand_slam<- data.frame(Grand_Slam = grand_slam_names, 
+                                          ROC_AUC = grand_slam_roc_auc_scores, 
+                                          image = logos)
+
+roc_auc_scores_by_grand_slam[,1:2]
+```
+
+### ROC AUC by Grand Slam
+Looking at this table, it's clear that the French Open and the US Open have the highest roc_auc value. Let's plot these relationships with a bar plot. 
+
+```{r 37, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(roc_auc_scores_by_grand_slam, aes(x = Grand_Slam, y = ROC_AUC)) +
+  geom_col(fill = "darkolivegreen2")  + ylab("ROC AUC") + 
+  ggtitle("ROC_AUC by Grand Slam") + theme(plot.title = element_text(hjust = 0.5))  +
+  scale_x_discrete(
+    name = "Grand Slam",
+    labels = logos
+  ) +
+  theme(
+    axis.text.x = element_markdown(color = "black", size = 11)
+  )
+
+```
+
+### Comparison Between Grand Slams Matches and Model's ROC AUC
+
+As with any model and generally, the more data points you have, the better the model performs. In this case, I was curious to see the relationship between the number of data points for each Grand Slam and it's ROC_AUC value. In our test data set, the Grand Slam with the fewest number of records is Roland Garros and then Wimbledon.Us Open and Australian Open are almost tied for the number of data records.  This is interesting because the Us Open is the highest performing model and Wimbledon is the second lowest performing model. 
+
+```{r 38, echo = TRUE, message = FALSE, warning = FALSE}
+wta_win_total <- wta_test %>%
+  group_by(tourney_name) %>%
+  summarize(n = n())
+
+names(wta_win_total)[2] <- "Frequency"
+
+wta_win_grand_slam_amt <- total_wta_df_clean %>%
+    group_by(tourney_name, win) %>%
+    summarize(n = n()) 
+
+wta_win_total<- cbind(wta_win_total,roc_auc_scores_by_grand_slam[,"ROC_AUC"])
+names(wta_win_total)[3] <- c("ROC_AUC")
+wta_win_total$logos<- c("/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/Australian_Open_logo.png", 
+         "/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/French_Open_Logo.png",
+         "/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/US_Open_logo.png",
+         "/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/Wimbledon_logo.png")
+wta_win_total[1:3]
+```
+
+I plotted this on a graph to get a better representation of the relationship between number of data points and model accuracy. This plot gives us some interesting results. We see that the Grand Slam that performs the best has one of the highest data points and the one that performs the second best has the smallest number of data points. There isn't a general trend we can point out since each Grand Slam is in a different quadrant so it is interesting to note. Perhaps there isn't a signficant relationship between the number of data points per Grand Slam and performance. 
+
+```{r 39, echo = TRUE, message = FALSE, warning = FALSE}
+ggplot(wta_win_total, aes(Frequency, ROC_AUC)) + geom_image(aes(image=logos), size=.1) + 
+  ggtitle("Number of Data Points per Grand Slam and Model's ROC AUC") +
+  theme(plot.title = element_text(hjust = 0.5)) +xlim(200, 330) + ylim(0.93,0.975) + 
+  geom_hline(yintercept=mean(wta_win_total$ROC_AUC), linetype="dashed", 
+                color = "red", size=0.5) +
+  geom_vline(xintercept=mean(wta_win_total$Frequency), linetype="dashed", 
+                color = "red", size=0.5)
+```
+
+### Variable Importance in Model
+
+Now that we've investigated how the model differs by each of the Grand Slams, let's take a look at the most important variable in our boosted tree model and see how they match up with our EDA and background knowledge of the sport. From the variable importance plot, we see that the number of breakpoints faced for the opponent and the player are the most important variables. This is important because the number of breakpoints faced reflects how well the player is holding their serve which is the biggest way to maintain competitiveness in a match and also gain an advantage (from breaking your opponent's serve). In our EDA, we discovered at the fewer number of breakpoints that a player faces, the more likely they are to win the match.
+
+```{r 40, echo = TRUE, message = FALSE, warning = FALSE}
+bt_final_fit %>%
+  extract_fit_engine() %>%
+  vip(aesthetics = list(fill = "darkolivegreen2", color = "black")) 
+  
+```
+
+# Applying Model 
+After creating a successful model to predict WTA Grand Slam tennis matches, let us actually apply this model. WTA is often very unpredictable and so are the outcomes of these Grand Slam tournaments. Let's see how our model will perform with some of the most memorable and unexpected match outcomes in recent years. 
+
+### Emma Raducanu's Dream US Open Run
+```{r 41, echo = TRUE, message = FALSE, warning = FALSE}
+# Extract her US Open 2021 wins
+US_Open_2021 <- wta_2021_df %>% dplyr::filter(winner_name == "Emma Raducanu", tourney_name == "Us Open")  
+
+# Store information from each match 
+US_Open_R1 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 170,
+  opp_age = 31,
+  p_ace = 3,
+  p_df = 3,
+  p_svpt = 57,
+  p_1stIn = 44,
+  p_1stWon = 29,
+  p_2ndWon = 6,
+  p_SvGms = 9,
+  p_bpSaved = 1,
+  p_bpFaced = 3,
+  o_ace = 2,
+  o_df = 1, 
+  o_svpt = 56, 
+  o_1stIn = 37,
+  o_1stWon = 18, 
+  o_2ndWon = 6, 
+  o_SvGms = 8, 
+  o_bpSaved = 3, 
+  o_bpFaced = 8, 
+  player_rank = 150, 
+  opp_rank = 128)
+
+US_Open_R2 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 177,
+  opp_age = 32,
+  p_ace = 3,
+  p_df = 0,
+  p_svpt = 46,
+  p_1stIn = 33,
+  p_1stWon = 28,
+  p_2ndWon = 7,
+  p_SvGms = 9,
+  p_bpSaved = 0,
+  p_bpFaced = 1,
+  o_ace = 2,
+  o_df = 5, 
+  o_svpt = 87, 
+  o_1stIn = 60,
+  o_1stWon = 32, 
+  o_2ndWon = 12, 
+  o_SvGms = 9, 
+  o_bpSaved = 7, 
+  o_bpFaced = 11, 
+  player_rank = 150 , 
+  opp_rank = 49)
+
+US_Open_R3 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 176,
+  opp_age = 25,
+  p_ace = 0,
+  p_df = 3,
+  p_svpt = 39,
+  p_1stIn = 28,
+  p_1stWon = 22,
+  p_2ndWon = 6,
+  p_SvGms = 7,
+  p_bpSaved = 0,
+  p_bpFaced = 0,
+  o_ace = 0,
+  o_df = 0, 
+  o_svpt = 54, 
+  o_1stIn = 40,
+  o_1stWon = 18, 
+  o_2ndWon = 4, 
+  o_SvGms = 6, 
+  o_bpSaved = 6, 
+  o_bpFaced = 11, 
+  player_rank = 150, 
+  opp_rank = 41)
+
+US_Open_R4 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 175,
+  opp_age = 29,
+  p_ace = 3,
+  p_df = 2,
+  p_svpt = 66,
+  p_1stIn = 50,
+  p_1stWon = 32,
+  p_2ndWon = 8,
+  p_SvGms = 8,
+  p_bpSaved = 8,
+  p_bpFaced = 9,
+  o_ace = 0,
+  o_df = 1, 
+  o_svpt = 41, 
+  o_1stIn = 32,
+  o_1stWon = 12, 
+  o_2ndWon = 4, 
+  o_SvGms = 7, 
+  o_bpSaved = 4, 
+  o_bpFaced = 9, 
+  player_rank = 150, 
+  opp_rank = 43)
+
+US_Open_R5 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 175,
+  opp_age = 24,
+  p_ace = 6,
+  p_df = 2,
+  p_svpt = 60,
+  p_1stIn = 39,
+  p_1stWon = 27,
+  p_2ndWon = 12,
+  p_SvGms = 10,
+  p_bpSaved = 4,
+  p_bpFaced = 5,
+  o_ace = 1,
+  o_df = 5, 
+  o_svpt = 54, 
+  o_1stIn = 33,
+  o_1stWon = 23, 
+  o_2ndWon = 9, 
+  o_SvGms = 9, 
+  o_bpSaved = 3, 
+  o_bpFaced = 6, 
+  player_rank = 150, 
+  opp_rank = 12)
+
+US_Open_R6 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 172,
+  opp_age = 26,
+  p_ace = 4,
+  p_df = 2,
+  p_svpt = 56, 
+  p_1stIn = 40,
+  p_1stWon = 39,
+  p_2ndWon = 11,
+  p_SvGms = 9,
+  p_bpSaved = 7,
+  p_bpFaced = 7,
+  o_ace = 4,
+  o_df = 5, 
+  o_svpt = 60, 
+  o_1stIn = 31,
+  o_1stWon = 22, 
+  o_2ndWon = 10, 
+  o_SvGms = 8, 
+  o_bpSaved = 8, 
+  o_bpFaced = 11, 
+  player_rank = 150, 
+  opp_rank = 18)
+
+
+US_Open_R7 <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 175,
+  player_age = 19,
+  opp_ht = 168,
+  opp_age = 19,
+  p_ace = 3,
+  p_df = 2,
+  p_svpt = 71, # start after here
+  p_1stIn = 49,
+  p_1stWon = 33,
+  p_2ndWon = 10,
+  p_SvGms = 10,
+  p_bpSaved = 7,
+  p_bpFaced = 9,
+  o_ace = 2,
+  o_df = 5, 
+  o_svpt = 78, 
+  o_1stIn = 45,
+  o_1stWon = 25, 
+  o_2ndWon = 15, 
+  o_SvGms = 9, 
+  o_bpSaved = 14, 
+  o_bpFaced = 18, 
+  player_rank = 150, 
+  opp_rank = 73)
+```
+
+After saving each match that Emma Raducanu played in the 2021 US Open and it's predictor information in a dataframe, , I predicted what the match outcome would be on our best model (boosted tree). I created a dataframe that holds the prediction of each round of the Grand Slam. 
+
+```{r 42, echo = TRUE, message = FALSE, warning = FALSE}
+R1_predit <- as.vector(predict(bt_final_fit, US_Open_R1, type = "class")$.pred_class)
+R2_predit <- as.vector(predict(bt_final_fit, US_Open_R2, type = "class")$.pred_class)
+R3_predit <- as.vector(predict(bt_final_fit, US_Open_R3, type = "class")$.pred_class)
+R4_predit <- as.vector(predict(bt_final_fit, US_Open_R4, type = "class")$.pred_class)
+R5_predit <- as.vector(predict(bt_final_fit, US_Open_R5, type = "class")$.pred_class)
+R6_predit <- as.vector(predict(bt_final_fit, US_Open_R6, type = "class")$.pred_class)
+R7_predit <- as.vector(predict(bt_final_fit, US_Open_R7, type = "class")$.pred_class)
+
+Round<- c("R1", "R2","R3","R4","R5","R6","R7")
+Prediction<- c(R1_predit, R2_predit, R3_predit, R4_predit, R5_predit, R6_predit, R7_predit)
+US_Open_2021_model_prediction<- data.frame(Round = Round, Prediction= Prediction)
+US_Open_2021_model_prediction
+```
+
+Surprisingly, our model predicted that she would win all 7 of her matches and win the tournament. This is exactly what what happened in real life! It was the sports story of a year. As a teenager and a qualifier for the tournament, no one would have predicted that Emma Raducanu would win the 2021 US Open. It's pretty astonishing that our model was able to predict her miraculous win of the tournament. Obviously our model did not predict her winning the tournament but her winning all the matchups in her draw.
+
+<center>
+![](/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/emma_trophy.gif){width=450px}
+<center>
+
+### Naomi Osaka French Open 2022 Loss
+
+In 2022, American Amanda Anisimova eliminated four-time Grand Slam winner Naomi Osaka from the 2022 French Open in straight sets (but a close match) in the first round. Most of the French Open data for 2022 had missing information, so I am interested to see how our model will predict a match without any of its statistics. In our cleaning, we removed any observation that had missing value so our model has never seen this information before. It is neccesary to include that Naomi Osaka had been performing inconsistently due to mental health reasons for the past couple of years despite enormous success in the past. 
+
+```{r 43, echo = TRUE, message = FALSE, warning = FALSE}
+Osaka_2020 <- wta_2022_df %>% dplyr::filter(tourney_name == "Roland Garros", 
+                                                loser_name == "Naomi Osaka") 
+Oaska_R1_FR <- data.frame(
+  tourney_name = "Roland Garros",
+  player_ht = 180,
+  player_age = 25,
+  opp_ht = 180,
+  opp_age = 21,
+  p_ace = NA,
+  p_df = NA,
+  p_svpt = NA, # start after here
+  p_1stIn = NA,
+  p_1stWon = NA,
+  p_2ndWon = NA,
+  p_SvGms = NA,
+  p_bpSaved = NA,
+  p_bpFaced = NA,
+  o_ace = NA,
+  o_df = NA, 
+  o_svpt = NA, 
+  o_1stIn = NA,
+  o_1stWon = NA, 
+  o_2ndWon = NA, 
+  o_SvGms = NA, 
+  o_bpSaved = NA, 
+  o_bpFaced = NA, 
+  player_rank = 38, 
+  opp_rank = 28)
+
+Oaska_R1_FR_predict <-predict(bt_final_fit, Oaska_R1_FR, type = "class")
+Oaska_R1_FR_predict
+```
+
+The question we asked in this prediction is: Will Anisimova beat Osaka?
+
+Despite all the missing information about the match, our model correctly predicted that Osaka would lose the match. The match was incredibly close, with Anisimova winning  7-5, 6-4 in the end. It's always interesting to see how great tennis players perform despite not having the best performance in recent months.
+
+### Serena William's 2016 Australian Open Upset
+2015 was an incredible year for Serena Williams. She was in, arguably, the best for of her life and had won all 3 Grand Slams leading up to the US Open in September. However, she lost in the semi-finals. Thus coming into the 2016 season, she was in amazing form and made the finals for the 2016 Australian Open against Angelique Kerber. Going into the final, Kerber and Williams had faced each other six times with Williams holding a 5–1 advantage. Let's see what our model predicts!
+
+```{r 44, echo = TRUE, message = FALSE, warning = FALSE}
+Williams_2016_AO <- data.frame(
+  tourney_name = "Us Open",
+  player_ht = 173,
+  player_age = 28,
+  opp_ht = 175,
+  opp_age = 34,
+  p_ace = 5,
+  p_df = 3,
+  p_svpt = 80, 
+  p_1stIn = 44,
+  p_1stWon = 32,
+  p_2ndWon = 17,
+  p_SvGms = 15,
+  p_bpSaved = 4,
+  p_bpFaced = 8,
+  o_ace = 7,
+  o_df = 6, 
+  o_svpt = 96, 
+  o_1stIn = 51,
+  o_1stWon = 35, 
+  o_2ndWon = 19, 
+  o_SvGms = 14, 
+  o_bpSaved = 4, 
+  o_bpFaced = 9, 
+  player_rank = 6, 
+  opp_rank = 1)
+
+Williams_2016_predict <-predict(bt_final_fit, Williams_2016_AO, type = "class")
+Williams_2016_predict 
+```
+The question we asked in this prediction is: Will Kerber beat Williams?
+
+Our model predicted that Angalique Kerber would win, which is what happened in real life. It was a close match with Kerber winning: 6–4, 3–6, 6–4. Coming into the final, Williams has steam rolled the competition and hadn't dropped a set. It's important to take note that our model doesn't take into account the player's recent performance like win streak, history at the tournament, and head to heads with the opponent. The information fed into the model doesn't reflect Willaim's historical performance during 2015. 
+
+```{r 45, echo = FALSE}
+embed_url("https://www.youtube.com/watch?v=7if3l8yBDbE&ab_channel=AustralianOpenTV")%>%
+  use_align("center")
+```
+
+### Confusion Matrix
+
+Our boosted tree model has a roc_auc value of 0.96 on the testing data and 1 for the training data, and correctly predicted all the matches I was interested in. Just to double check that my model can actually make mistakes, let me check the confusion matrix. 
+
+```{r 46, echo = FALSE}
+
+wta_best_test_roc_auc <- augment(bt_final_fit, new_data = wta_test)
+  
+heat_roc<- wta_best_test_roc_auc %>% 
+  conf_mat(truth = win, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+
+heat_roc
+```
+
+Looking at the confusion matrix we can see that the total number of predicted negatives is 528 while the actual number of negatives is 535. Additionally, the total number of predicted positives is 528 while the actual number of negatives is 521. We also know that our model is more likely to predict a player looses match than it wins it. 
+
+Using these numbers we know that: 
+$$accuracy = \frac{TP + TN}{TP + TN + FP + FN} = \frac{475 + 468}{475 + 468 +53+60} = 0.893$$
+$$precision = \frac{TP}{TP +FP} = \frac{468}{468 + 53} = 0.898$$
+
+This means that our 89.3 % of our model's predictions were correct and that our model did make mistakes. 
+
+That's a relief to see, perhaps our model is just that good! Time to celebrate!
+
+<center>
+![](/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/serena_dancing.gif){width=450px}
+<center>
+
+# Conclusion 
+
+Throughout the entire project, we yielded a model that could predict the outcome of a WTA Grand Slam match extremely well but was not perfect. 
+
+One thing to keep in mind is that our model uses match statistics and player information to decide the outcome of a match. However, the match statistics can implicitly tell us who is going to win a tennis match based on how many first serves, breakpoints, and ranking a player has. The match statistics already somewhat reflect the outcome of the match if you took a closer look. This was the tennis best data set I could find and it is the most popular data set used for any research in tennis. When doing a true prediction you would not have the match statistics, but this is the best we could do. This is most likely the reason why the accuracy and roc_auc values of our model is so high and is able to predict the outcomes of match extremely well. I think it could be extremely interesting to integrate statistics about a player's head to head record with another player, their winning streak, or even how many tournaments they have won this past year. I want to create prediction model that do not use match statistics because I believe it makes the basis of the problem too easy. Further research could figure out a way to integrate these statistics in the model and also to predict more than just Grand Slam matches. 
+
+I dropped some variables that I spent time cleaning and analyzing in my EDA like the number of games won in the first set for both players and their country. However, from running my models I thought including the number of games won during the first set would make predicting the outcome too easy since most of the time a positive result in the first set yielded a positive match outcome. I ran models including these metrics and found my roc_auc to be extremely high so I wanted to make the conditions a little more challenging so I decided to drop them. I also included both the player's and opponent's country but since there are 46 levels for each of those variables I would be introducing 90 more variables into my model to simply dummy encode this information which made certain models rank deficient. 
+
+From testing various models and discovering that all of them performed extremely well, I ultimately went with the boosted forest model because of the perfect roc_auc value it had on the testing data set. The boosted tree model is naturally robust to missing values and outliers which lends some insight into how our model was able to correctly predict a match outcome with missing match statistics. Since boosted trees are a combination of two techniques: decision tree algorithms and boosting methods, it is able to build trees by continuously tries to improve its accuracy when generating new trees. In this sense, this method is taking is continuously improving and building upon itself in a iterative manner. 
+
+Moving forward, I would like to have fit some more models that we learned later in the class and understand which types of data records my model is misclassifying. Additionally, I enjoyed making visualizations of the data, I also wish to have explored this aspect of the project more. Overall, this project was a great way for me to apply all the content I learned about this quarter and makes me more confident in my skills as a data scientist. I am really proud of how far I have come and this project actually inspired me to persue more independent machine learning projects. 
+
+<center>
+![](/Users/jaiuparkar/Downloads/PSTAT231/Final_Project/Media/ending_serena.gif){width=450px}
+<center>
